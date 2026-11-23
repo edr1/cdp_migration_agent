@@ -69,7 +69,9 @@ DDL en [`sql/source/`](sql/source):
 
 ## Uso rápido (Linux / DGX Spark)
 
-Requisitos: Docker + Compose v2, Python 3.10+, `make`.
+Requisitos: Docker + Compose v2, `make` y, opcionalmente, Python 3.10+ con `python3-venv`.
+Si `python3-venv` no está instalado (Ubuntu sin `apt install python3.12-venv`), `make data` genera el
+dataset automáticamente dentro de un contenedor `python:3.12-slim` (también disponible como `make data-docker`).
 
 ```bash
 make env            # crea .env desde .env.example

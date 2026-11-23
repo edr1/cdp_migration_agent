@@ -5,7 +5,7 @@ VPY    := $(VENV)/bin/python
 SRC    := docker compose --env-file .env -f docker/cloudera/docker-compose.yml
 TGT    := docker compose --env-file .env -f docker/trino/docker-compose.yml
 
-.PHONY: help env venv data source-up source-up-impala source-load source-down target-up target-init target-down up down clean beeline trino
+.PHONY: help env venv data data-local data-docker source-up source-up-impala source-load source-down target-up target-init target-down up down clean beeline trino
 
 help:            ## Lista de comandos
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-18s %s\n", $$1, $$2}'
@@ -13,11 +13,29 @@ help:            ## Lista de comandos
 env:             ## Crea .env desde .env.example (si no existe)
 	@test -f .env || cp .env.example .env
 
-venv:            ## Entorno Python para el generador
-	$(PYTHON) -m venv $(VENV) && $(VPY) -m pip install -q -r data_generator/requirements.txt
+venv:            ## Entorno Python para el generador (requiere python3-venv)
+	@$(VPY) -m pip --version >/dev/null 2>&1 || { rm -rf $(VENV); $(PYTHON) -m venv $(VENV); }
+	$(VPY) -m pip install -q -r data_generator/requirements.txt
 
-data: venv       ## Genera el dataset sintetico (SCALE=1.0 SEED=42)
-	$(VPY) data_generator/generate.py --out data/source --scale $${SCALE:-1.0} --seed $${SEED:-42}
+GEN_ARGS = --out data/source --scale $${SCALE:-1.0} --seed $${SEED:-42}
+
+data:            ## Genera el dataset sintetico (SCALE=1.0 SEED=42); usa Docker si no hay python3-venv
+	@if $(MAKE) --no-print-directory venv >/dev/null 2>&1; then \
+		$(MAKE) --no-print-directory data-local; \
+	else \
+		echo ">>> No se pudo crear el venv (falta python3-venv?): generando el dataset dentro de Docker"; \
+		rm -rf $(VENV); \
+		$(MAKE) --no-print-directory data-docker; \
+	fi
+
+data-local: venv ## Genera el dataset con el venv local
+	$(VPY) data_generator/generate.py $(GEN_ARGS)
+
+data-docker:     ## Genera el dataset dentro de un contenedor python:3.12-slim
+	docker run --rm -u "$$(id -u):$$(id -g)" -e HOME=/tmp -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
+		-v "$(CURDIR)":/work -w /work python:3.12-slim \
+		sh -c "pip install -q --no-warn-script-location --target /tmp/deps -r data_generator/requirements.txt \
+		       && PYTHONPATH=/tmp/deps python data_generator/generate.py $(GEN_ARGS)"
 
 source-up: env   ## Levanta el ORIGEN (Hive Metastore + HiveServer2)
 	$(SRC) up -d --build --wait
