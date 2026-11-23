@@ -9,3 +9,4 @@ Makefile  text eol=lf
 *.parquet binary
 Dockerfile text eol=lf
 .env.example text eol=lf
+*.ini text eol=lf

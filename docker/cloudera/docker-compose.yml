@@ -5,6 +5,7 @@
 #  - hiveserver2       : endpoint SQL Hive  (jdbc:hive2://localhost:10000)
 #  - impala (opcional) : statestored + catalogd + impalad sobre el MISMO HMS
 #                        perfil "impala" -> solo linux/amd64
+#  - hue (opcional)    : UI web (http://localhost:8888), perfil "hue"
 # =====================================================================
 name: cdp-source
 
@@ -145,9 +146,45 @@ services:
       - ./impala/conf:/opt/impala/conf:ro
     networks: [cdp-net]
 
+  # --------------------------- Hue (opcional) ---------------------------
+  # UI web de Cloudera para explorar el metastore y consultar Hive/Impala.
+  hue-postgres:
+    profiles: ["hue"]
+    image: postgres:16-alpine
+    container_name: cdp-hue-postgres
+    environment:
+      POSTGRES_USER: hue
+      POSTGRES_PASSWORD: hue_password
+      POSTGRES_DB: hue
+    volumes:
+      - hue-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hue -d hue"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [cdp-net]
+
+  hue:
+    profiles: ["hue"]
+    image: gethue/hue:${HUE_VERSION:-4.11.0}
+    container_name: cdp-hue
+    hostname: hue
+    depends_on:
+      hue-postgres:
+        condition: service_healthy
+      hiveserver2:
+        condition: service_healthy
+    ports:
+      - "${HUE_PORT:-8888}:8888"
+    volumes:
+      - ./hue/z-hue.ini:/usr/share/hue/desktop/conf/z-hue.ini:ro
+    networks: [cdp-net]
+
 volumes:
   hms-postgres-data:
   hive-warehouse:
+  hue-postgres-data:
 
 networks:
   cdp-net:

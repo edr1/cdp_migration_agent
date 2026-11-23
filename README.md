@@ -29,6 +29,10 @@ emula con los mismos motores open source que trae CDP Runtime:
 | Hive Metastore | `apache/hive` (metastore) + PostgreSQL | amd64 / arm64* |
 | Hive (HiveServer2) | `apache/hive` (hiveserver2) | amd64 / arm64* |
 | Impala | `apache/impala` (statestored, catalogd, impalad) | **solo amd64** |
+| Hue | `gethue/hue` + PostgreSQL propio | ver nota** |
+
+\*\* Verifica si `gethue/hue:${HUE_VERSION}` publica arm64 (`docker manifest inspect gethue/hue:4.11.0`).
+Si solo hay amd64, Hue funciona bajo emulación QEMU/binfmt (más lento, suficiente para explorar datos).
 
 \* Verifica la disponibilidad arm64 de `apache/hive:${HIVE_VERSION}` en la DGX Spark (`docker manifest inspect apache/hive:4.0.1`).
 
@@ -82,6 +86,20 @@ make target-up      # Trino + Iceberg + MinIO
 make target-init    # crea iceberg.db_production y iceberg.db_consulting
 ```
 
+### Hue (UI web del origen)
+
+```bash
+make hue-up         # levanta Hue (y el origen, si no estaba arriba)
+```
+
+Abre http://localhost:8888. **El primer usuario que inicies sesión se crea como administrador**
+(elige usuario y contraseña en ese momento). Desde Hue puedes:
+- **Tablas** (navegador del metastore): ver `db_production` y `db_consulting`, columnas, tipos y una muestra de filas.
+- **Editor → Hive**: consultar con SQL, p. ej. `SELECT * FROM db_production.vw_certificacion_logs LIMIT 50`.
+- **Editor → Impala**: solo si levantaste el perfil Impala (`make source-up-impala`).
+
+Para detener solo Hue: `make hue-down`.
+
 Consolas: `make beeline` (Hive) · `make trino` (Trino) · `make help` para todos los comandos.
 `make clean` elimina contenedores, **volúmenes** y datos generados.
 
@@ -92,6 +110,7 @@ Consolas: `make beeline` (Hive) · `make trino` (Trino) · `make help` para todo
 | HiveServer2 | `jdbc:hive2://localhost:10000/` (usuario `hive`, sin password) · UI http://localhost:10002 |
 | Hive Metastore | `thrift://localhost:9083` |
 | Impala (opcional) | `localhost:21050` (HS2) · UI http://localhost:25000 |
+| Hue (opcional) | http://localhost:8888 |
 | Trino | http://localhost:8080 (usuario cualquiera) · catálogo `iceberg` |
 | MinIO | API http://localhost:9000 · consola http://localhost:9001 |
 
@@ -100,7 +119,7 @@ Credenciales locales de desarrollo en `.env` (no versionado).
 ## Estructura
 
 ```
-docker/cloudera/   compose del origen (Hive, HMS, Impala opcional)
+docker/cloudera/   compose del origen (Hive, HMS, Impala y Hue opcionales)
 docker/trino/      compose del destino + catálogo Iceberg
 sql/source/        DDL, carga y validación del origen
 sql/target/        esquemas destino

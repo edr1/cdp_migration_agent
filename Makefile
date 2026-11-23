@@ -5,7 +5,7 @@ VPY    := $(VENV)/bin/python
 SRC    := docker compose --env-file .env -f docker/cloudera/docker-compose.yml
 TGT    := docker compose --env-file .env -f docker/trino/docker-compose.yml
 
-.PHONY: help env venv data data-local data-docker source-up source-up-impala source-load source-down target-up target-init target-down up down clean beeline trino
+.PHONY: help env venv data data-local data-docker source-up source-up-impala hue-up hue-down source-load source-down target-up target-init target-down up down clean beeline trino
 
 help:            ## Lista de comandos
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-18s %s\n", $$1, $$2}'
@@ -43,11 +43,17 @@ source-up: env   ## Levanta el ORIGEN (Hive Metastore + HiveServer2)
 source-up-impala: env  ## Levanta el ORIGEN incluyendo Impala (solo amd64)
 	$(SRC) --profile impala up -d --build --wait
 
+hue-up: env      ## Levanta Hue (UI web del ORIGEN) en http://localhost:8888
+	$(SRC) --profile hue up -d --build
+
+hue-down:        ## Detiene solo Hue
+	$(SRC) --profile hue stop hue hue-postgres
+
 source-load:     ## Crea tablas en el ORIGEN y carga el dataset
 	bash scripts/source_load.sh
 
-source-down:     ## Detiene el ORIGEN
-	$(SRC) --profile impala down
+source-down:     ## Detiene el ORIGEN (incluye Impala y Hue)
+	$(SRC) --profile impala --profile hue down
 
 target-up: env   ## Levanta el DESTINO (Trino + Iceberg + MinIO)
 	$(TGT) up -d
@@ -68,6 +74,6 @@ trino:           ## Consola SQL de Trino (destino)
 	$(TGT) exec trino trino --catalog iceberg
 
 clean:           ## Borra contenedores, VOLUMENES y datos generados
-	$(SRC) --profile impala down -v
+	$(SRC) --profile impala --profile hue down -v
 	$(TGT) down -v
 	rm -rf data/source
