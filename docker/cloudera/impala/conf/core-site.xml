@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!-- El warehouse vive en el volumen local compartido (no hay HDFS en la emulacion) -->
+<configuration>
+  <property>
+    <name>fs.defaultFS</name>
+    <value>file:///</value>
+  </property>
+</configuration>

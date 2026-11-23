@@ -1,0 +1,154 @@
+# =====================================================================
+#  ORIGEN - "Cloudera" (emulacion local de CDP Runtime)
+#  - PostgreSQL        : base de datos del Hive Metastore
+#  - hive-metastore    : catalogo compartido (como el HMS de CDP)
+#  - hiveserver2       : endpoint SQL Hive  (jdbc:hive2://localhost:10000)
+#  - impala (opcional) : statestored + catalogd + impalad sobre el MISMO HMS
+#                        perfil "impala" -> solo linux/amd64
+# =====================================================================
+name: cdp-source
+
+x-hive-image: &hive-image
+  build:
+    context: ./hive
+    args:
+      HIVE_VERSION: ${HIVE_VERSION:-4.0.1}
+  image: cdp-migration/hive:${HIVE_VERSION:-4.0.1}
+
+services:
+  hms-postgres:
+    image: postgres:16-alpine
+    container_name: cdp-hms-postgres
+    environment:
+      POSTGRES_USER: ${HMS_DB_USER:-hive}
+      POSTGRES_PASSWORD: ${HMS_DB_PASSWORD:-hive_password}
+      POSTGRES_DB: ${HMS_DB_NAME:-metastore_db}
+    volumes:
+      - hms-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${HMS_DB_USER:-hive} -d ${HMS_DB_NAME:-metastore_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [cdp-net]
+
+  hive-metastore:
+    <<: *hive-image
+    container_name: cdp-hive-metastore
+    hostname: hive-metastore
+    depends_on:
+      hms-postgres:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      # El entrypoint ejecuta "schematool -initOrUpgradeSchema" (idempotente)
+      IS_RESUME: "false"
+      SERVICE_OPTS: >-
+        -Xmx1G
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hms-postgres:5432/${HMS_DB_NAME:-metastore_db}
+        -Djavax.jdo.option.ConnectionUserName=${HMS_DB_USER:-hive}
+        -Djavax.jdo.option.ConnectionPassword=${HMS_DB_PASSWORD:-hive_password}
+        -Dhive.metastore.event.db.notification.api.auth=false
+    ports:
+      - "${HIVE_METASTORE_PORT:-9083}:9083"
+    volumes:
+      - hive-warehouse:/opt/hive/data/warehouse
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9083'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [cdp-net]
+
+  hiveserver2:
+    <<: *hive-image
+    container_name: cdp-hiveserver2
+    hostname: hiveserver2
+    depends_on:
+      hive-metastore:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: hiveserver2
+      IS_RESUME: "true"
+      SERVICE_OPTS: >-
+        -Xmx2G
+        -Dhive.metastore.uris=thrift://hive-metastore:9083
+    ports:
+      - "${HIVESERVER2_PORT:-10000}:10000"
+      - "${HIVESERVER2_UI_PORT:-10002}:10002"
+    volumes:
+      - hive-warehouse:/opt/hive/data/warehouse
+      # DDL y dataset sintetico disponibles dentro del contenedor
+      - ../../sql:/opt/cdp/sql:ro
+      - ../../data:/opt/cdp/data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/hive/bin/beeline -u jdbc:hive2://localhost:10000/ -n hive -e 'show databases;' > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 30s
+      retries: 40
+      start_period: 30s
+    networks: [cdp-net]
+
+  # ------------------------- Impala (opcional) -------------------------
+  impala-statestored:
+    profiles: ["impala"]
+    image: apache/impala:${IMPALA_VERSION:-4.4.1}-statestored
+    platform: linux/amd64
+    container_name: cdp-impala-statestored
+    command: ["-redirect_stdout_stderr=false", "-logtostderr", "-v=1"]
+    volumes:
+      - ./impala/conf:/opt/impala/conf:ro
+    networks: [cdp-net]
+
+  impala-catalogd:
+    profiles: ["impala"]
+    image: apache/impala:${IMPALA_VERSION:-4.4.1}-catalogd
+    platform: linux/amd64
+    container_name: cdp-impala-catalogd
+    depends_on: [impala-statestored, hive-metastore]
+    command:
+      - "-redirect_stdout_stderr=false"
+      - "-logtostderr"
+      - "-v=1"
+      - "-state_store_host=impala-statestored"
+      - "-hms_event_polling_interval_s=1"
+      - "-invalidate_tables_timeout_s=999999"
+    volumes:
+      - hive-warehouse:/opt/hive/data/warehouse
+      - ./impala/conf:/opt/impala/conf:ro
+    networks: [cdp-net]
+
+  impalad:
+    profiles: ["impala"]
+    image: apache/impala:${IMPALA_VERSION:-4.4.1}-impalad_coord_exec
+    platform: linux/amd64
+    container_name: cdp-impalad
+    depends_on: [impala-statestored, impala-catalogd]
+    command:
+      - "-redirect_stdout_stderr=false"
+      - "-logtostderr"
+      - "-v=1"
+      - "-state_store_host=impala-statestored"
+      - "-catalog_service_host=impala-catalogd"
+      - "-mt_dop_auto_fallback=true"
+      - "-default_query_options=default_file_format=parquet"
+      - "-mem_limit=4gb"
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx1g"
+    ports:
+      - "${IMPALA_HS2_PORT:-21050}:21050"
+      - "${IMPALA_UI_PORT:-25000}:25000"
+    volumes:
+      - hive-warehouse:/opt/hive/data/warehouse
+      - ./impala/conf:/opt/impala/conf:ro
+    networks: [cdp-net]
+
+volumes:
+  hms-postgres-data:
+  hive-warehouse:
+
+networks:
+  cdp-net:
+    name: ${CDP_NETWORK:-cdp-migration-net}
