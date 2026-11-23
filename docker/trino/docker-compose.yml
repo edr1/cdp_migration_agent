@@ -1,48 +1,84 @@
 # =====================================================================
 #  DESTINO - Trino + Apache Iceberg (lakehouse)
-#  - minio            : almacenamiento S3 para los datos Iceberg
-#  - minio-init       : crea el bucket del warehouse
+#  - seaweedfs        : almacenamiento compatible S3 para los datos Iceberg
+#                       (reemplaza a MinIO, cuyas imagenes ya no son publicas)
+#  - s3-init          : crea el bucket del warehouse
 #  - iceberg-postgres : catalogo Iceberg JDBC (metadatos de tablas)
 #  - trino            : motor SQL destino (http://localhost:8080)
 #  Todas las imagenes son multi-arquitectura (amd64 / arm64 -> DGX Spark).
 # =====================================================================
 name: cdp-target
 
+configs:
+  seaweedfs_s3:
+    content: |
+      {
+        "identities": [
+          {
+            "name": "trino",
+            "credentials": [
+              { "accessKey": "${S3_ACCESS_KEY:-cdp_access_key}", "secretKey": "${S3_SECRET_KEY:-cdp_secret_key_change_me}" }
+            ],
+            "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+          }
+        ]
+      }
+
 services:
-  minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
-    container_name: cdp-minio
-    command: ["server", "/data", "--console-address", ":9001"]
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_password}
+  seaweedfs:
+    image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-3.80}
+    container_name: cdp-seaweedfs
+    hostname: seaweedfs
+    command:
+      - "server"
+      - "-dir=/data"
+      - "-ip=seaweedfs"
+      - "-ip.bind=0.0.0.0"
+      - "-volume.max=0"
+      - "-master.volumeSizeLimitMB=1024"
+      - "-s3"
+      - "-s3.port=8333"
+      - "-s3.config=/etc/seaweedfs/s3.json"
+    configs:
+      - source: seaweedfs_s3
+        target: /etc/seaweedfs/s3.json
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${S3_API_PORT:-8333}:8333"     # API S3
+      - "${S3_MASTER_UI_PORT:-9333}:9333"  # UI del master de SeaweedFS
     volumes:
-      - minio-data:/data
+      - seaweedfs-data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9333/cluster/status || exit 1"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
     networks: [cdp-net]
 
-  minio-init:
-    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
-    container_name: cdp-minio-init
+  s3-init:
+    image: amazon/aws-cli:${AWS_CLI_VERSION:-2.15.0}
+    container_name: cdp-s3-init
     depends_on:
-      minio:
+      seaweedfs:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD} &&
-      mc mb --ignore-existing local/$${ICEBERG_BUCKET} &&
-      echo 'bucket listo'"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_password}
-      ICEBERG_BUCKET: ${ICEBERG_BUCKET:-warehouse}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-cdp_access_key}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-cdp_secret_key_change_me}
+      AWS_DEFAULT_REGION: us-east-1
+      BUCKET: ${ICEBERG_BUCKET:-warehouse}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        EP=http://seaweedfs:8333
+        for i in $$(seq 1 30); do
+          if aws --endpoint-url $$EP s3api head-bucket --bucket $$BUCKET 2>/dev/null; then
+            echo "bucket $$BUCKET ya existe"; exit 0
+          fi
+          if aws --endpoint-url $$EP s3 mb s3://$$BUCKET; then
+            echo "bucket $$BUCKET creado"; exit 0
+          fi
+          echo "S3 aun no disponible, reintentando ($$i)..."; sleep 3
+        done
+        echo "no se pudo crear el bucket" >&2; exit 1
     restart: "no"
     networks: [cdp-net]
 
@@ -69,7 +105,7 @@ services:
     depends_on:
       iceberg-postgres:
         condition: service_healthy
-      minio-init:
+      s3-init:
         condition: service_completed_successfully
     environment:
       # usadas por etc/catalog/iceberg.properties via ${ENV:...}
@@ -77,8 +113,8 @@ services:
       ICEBERG_DB_PASSWORD: ${ICEBERG_DB_PASSWORD:-iceberg_password}
       ICEBERG_DB_NAME: ${ICEBERG_DB_NAME:-iceberg_catalog}
       ICEBERG_BUCKET: ${ICEBERG_BUCKET:-warehouse}
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_password}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-cdp_access_key}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-cdp_secret_key_change_me}
     ports:
       - "${TRINO_PORT:-8080}:8080"
     volumes:
@@ -93,7 +129,7 @@ services:
     networks: [cdp-net]
 
 volumes:
-  minio-data:
+  seaweedfs-data:
   iceberg-postgres-data:
 
 networks:

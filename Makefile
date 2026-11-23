@@ -55,7 +55,7 @@ source-load:     ## Crea tablas en el ORIGEN y carga el dataset
 source-down:     ## Detiene el ORIGEN (incluye Impala y Hue)
 	$(SRC) --profile impala --profile hue down
 
-target-up: env   ## Levanta el DESTINO (Trino + Iceberg + MinIO)
+target-up: env   ## Levanta el DESTINO (Trino + Iceberg + SeaweedFS)
 	$(TGT) up -d
 
 target-init:     ## Crea los esquemas destino en Trino

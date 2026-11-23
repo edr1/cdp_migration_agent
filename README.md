@@ -13,7 +13,7 @@ pensado para ejecutarse en una **NVIDIA DGX Spark** usando un modelo servido con
 ┌──────────── ORIGEN "Cloudera" ────────────┐     ┌──────────── DESTINO Trino ────────────┐
 │ hms-postgres ── hive-metastore (9083)     │     │ trino (8080) ── catalogo "iceberg"    │
 │                   │                       │     │    │                    │             │
-│ hiveserver2 (10000)   impala* (21050)     │ ==> │ iceberg-postgres     minio (9000/9001)│
+│ hiveserver2 (10000)   impala* (21050)     │ ==> │ iceberg-postgres  seaweedfs S3 (8333) │
 │   db_production / db_consulting (Parquet) │     │  (catalogo JDBC)     bucket warehouse │
 └───────────────────────────────────────────┘     └───────────────────────────────────────┘
  * Impala es opcional (perfil "impala")
@@ -33,6 +33,12 @@ emula con los mismos motores open source que trae CDP Runtime:
 
 \*\* Verifica si `gethue/hue:${HUE_VERSION}` publica arm64 (`docker manifest inspect gethue/hue:4.11.0`).
 Si solo hay amd64, Hue funciona bajo emulación QEMU/binfmt (más lento, suficiente para explorar datos).
+
+### Almacenamiento S3 del destino: SeaweedFS (no MinIO)
+MinIO retiró sus imágenes `minio/minio` y `minio/mc` de Docker Hub y Quay ya no permite descargas anónimas
+(error `pull access denied for minio/minio`). El destino usa **SeaweedFS** (`chrislusf/seaweedfs`, Apache 2.0,
+multi-arch) como almacenamiento compatible S3; el bucket lo crea `s3-init` con `aws-cli`.
+Credenciales en `.env` (`S3_ACCESS_KEY` / `S3_SECRET_KEY`).
 
 \* Verifica la disponibilidad arm64 de `apache/hive:${HIVE_VERSION}` en la DGX Spark (`docker manifest inspect apache/hive:4.0.1`).
 
@@ -82,7 +88,7 @@ make env            # crea .env desde .env.example
 make data           # genera el dataset (SCALE=5 make data para 5x)
 make source-up      # Hive Metastore + HiveServer2  (make source-up-impala para incluir Impala)
 make source-load    # crea bases/tablas y carga el dataset; muestra conteos
-make target-up      # Trino + Iceberg + MinIO
+make target-up      # Trino + Iceberg + SeaweedFS (S3)
 make target-init    # crea iceberg.db_production y iceberg.db_consulting
 ```
 
@@ -112,7 +118,7 @@ Consolas: `make beeline` (Hive) · `make trino` (Trino) · `make help` para todo
 | Impala (opcional) | `localhost:21050` (HS2) · UI http://localhost:25000 |
 | Hue (opcional) | http://localhost:8888 |
 | Trino | http://localhost:8080 (usuario cualquiera) · catálogo `iceberg` |
-| MinIO | API http://localhost:9000 · consola http://localhost:9001 |
+| SeaweedFS (S3) | API S3 http://localhost:8333 · UI master http://localhost:9333 |
 
 Credenciales locales de desarrollo en `.env` (no versionado).
 
