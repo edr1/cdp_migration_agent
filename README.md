@@ -89,7 +89,7 @@ make data           # genera el dataset (SCALE=5 make data para 5x)
 make source-up      # Hive Metastore + HiveServer2  (make source-up-impala para incluir Impala)
 make source-load    # crea bases/tablas y carga el dataset; muestra conteos
 make target-up      # Trino + Iceberg + SeaweedFS (S3)
-make target-init    # crea iceberg.db_production y iceberg.db_consulting
+make target-init    # crea tablas del catálogo JDBC + iceberg.db_production y iceberg.db_consulting
 ```
 
 ### Hue (UI web del origen)

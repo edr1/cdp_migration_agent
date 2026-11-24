@@ -91,6 +91,9 @@ services:
       POSTGRES_DB: ${ICEBERG_DB_NAME:-iceberg_catalog}
     volumes:
       - iceberg-postgres-data:/var/lib/postgresql/data
+      # Tablas que exige el catalogo Iceberg JDBC de Trino (solo corre con volumen nuevo;
+      # scripts/target_init.sh las aplica tambien sobre volumenes existentes)
+      - ../../sql/target/00_iceberg_jdbc_catalog.sql:/docker-entrypoint-initdb.d/00_iceberg_jdbc_catalog.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${ICEBERG_DB_USER:-iceberg} -d ${ICEBERG_DB_NAME:-iceberg_catalog}"]
       interval: 5s
