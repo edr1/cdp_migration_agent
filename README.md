@@ -104,7 +104,27 @@ Abre http://localhost:8888. **El primer usuario que inicies sesión se crea como
 - **Editor → Hive**: consultar con SQL, p. ej. `SELECT * FROM db_production.vw_certificacion_logs LIMIT 50`.
 - **Editor → Impala**: solo si levantaste el perfil Impala (`make source-up-impala`).
 
+- **Editor → Trino (destino)**: el mismo Hue consulta Trino (`http://trino:8080`), útil para comparar
+  origen y destino lado a lado. Requiere el destino arriba (`make target-up`). Si cambias `z-hue.ini`,
+  reinicia Hue con `docker restart cdp-hue`.
+
 Para detener solo Hue: `make hue-down`.
+
+### Validar el destino (Trino)
+
+- **Consola web de Trino** (http://localhost:8080, cualquier usuario): monitoreo de consultas y del cluster;
+  no incluye navegador de tablas.
+- **Hue → Editor Trino**: navegador de catálogos/esquemas/tablas y SQL.
+- **CLI**: `make trino`, y dentro:
+
+```sql
+SHOW SCHEMAS FROM iceberg;
+SHOW TABLES FROM iceberg.db_production;
+DESCRIBE iceberg.db_production.tbl_certificacion_logs;
+SELECT * FROM iceberg.db_production."tbl_certificacion_logs$files";   -- archivos Parquet en S3
+```
+
+- **SeaweedFS** (http://localhost:9333): estado del almacenamiento S3 donde Iceberg guarda los datos.
 
 Consolas: `make beeline` (Hive) · `make trino` (Trino) · `make help` para todos los comandos.
 `make clean` elimina contenedores, **volúmenes** y datos generados.
