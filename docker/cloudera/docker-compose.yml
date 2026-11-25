@@ -167,7 +167,12 @@ services:
 
   hue:
     profiles: ["hue"]
-    image: gethue/hue:${HUE_VERSION:-4.11.0}
+    # gethue/hue + driver Trino (ver hue/Dockerfile)
+    build:
+      context: ./hue
+      args:
+        HUE_VERSION: ${HUE_VERSION:-4.11.0}
+    image: cdp-migration/hue:${HUE_VERSION:-4.11.0}
     container_name: cdp-hue
     hostname: hue
     depends_on:

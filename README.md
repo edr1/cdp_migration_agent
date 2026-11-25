@@ -104,9 +104,10 @@ Abre http://localhost:8888. **El primer usuario que inicies sesión se crea como
 - **Editor → Hive**: consultar con SQL, p. ej. `SELECT * FROM db_production.vw_certificacion_logs LIMIT 50`.
 - **Editor → Impala**: solo si levantaste el perfil Impala (`make source-up-impala`).
 
-- **Editor → Trino (destino)**: el mismo Hue consulta Trino (`http://trino:8080`), útil para comparar
-  origen y destino lado a lado. Requiere el destino arriba (`make target-up`). Si cambias `z-hue.ini`,
-  reinicia Hue con `docker restart cdp-hue`.
+- **Editor → Trino (destino)**: el mismo Hue consulta Trino (`trino://hue@trino:8080/iceberg`), útil para
+  comparar origen y destino lado a lado. Hue 4.11 no trae conector nativo de Trino, así que la imagen
+  `cdp-migration/hue` (ver `docker/cloudera/hue/Dockerfile`) agrega el driver `trino` para el conector SQLAlchemy.
+  Requiere el destino arriba (`make target-up`). Si cambias `z-hue.ini`, reinicia Hue con `docker restart cdp-hue`.
 
 Para detener solo Hue: `make hue-down`.
 
