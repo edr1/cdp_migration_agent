@@ -4,7 +4,7 @@
                 (online|offline)                                                     (online|offline)
 
 Cada fase: (1) carga su SKILL.md, (2) ejecuta tools deterministicas, (3) opcionalmente invoca al LLM
-(NVIDIA NIM) para lo que las reglas no resuelven, (4) registra eventos y hallazgos en el estado.
+(Nemotron via Ollama remoto, o NIM) para lo que las reglas no resuelven, (4) registra eventos y hallazgos en el estado.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 from ..core.config import AgentConfig
 from ..core.ir import Finding, Inventory, Severity, StatementKind, Table
-from ..core.llm import NIMClient, extract_json
+from ..core.llm import BaseLLM, create_llm
 from ..core.matrix import EquivalenceMatrix
 from ..core.skills import SkillRegistry
 from ..tools import connectivity, ranger, source_offline, validate
@@ -39,7 +39,7 @@ class RunContext:
     inventory: Inventory = field(default_factory=Inventory)
     translator: Translator | None = None
     modes: dict = field(default_factory=dict)
-    llm: NIMClient | None = None
+    llm: BaseLLM | None = None
     target: object | None = None
     findings: list[Finding] = field(default_factory=list)
     events: list[dict] = field(default_factory=list)
@@ -93,12 +93,12 @@ class MigrationPipeline:
             from ..tools.target_online import TrinoTarget
             c.target = TrinoTarget(c.cfg)
         if c.cfg.llm_enabled:
-            client = NIMClient(c.cfg)
+            client = create_llm(c.cfg)
             ok, detail = client.available()
             c.llm = client if ok else None
-            c.log("P0_probe", f"LLM NIM {'disponible' if ok else 'NO disponible (modo deterministico)'}: {detail}")
+            c.log("P0_probe", f"LLM {client.provider}:{client.model} {'disponible' if ok else 'NO disponible (modo deterministico)'}: {detail}")
             if not ok:
-                c.findings.append(Finding(Severity.INFO, "llm.unavailable", f"NIM no disponible: {detail}"))
+                c.findings.append(Finding(Severity.INFO, "llm.unavailable", f"LLM ({client.provider}) no disponible: {detail}"))
 
     # ================================================================== P1
     def p1_discover(self) -> None:
@@ -235,7 +235,7 @@ class MigrationPipeline:
             c.llm_suggestions.append({"statement": st.id, "operation": st.operation, "sql": sqls,
                                       "syntax_valid": valid, "explanation": out.get("explanation"),
                                       "confidence": out.get("confidence")})
-        lines = [_header("Propuestas del LLM (NIM) - REQUIEREN APROBACION HUMANA")]
+        lines = [_header("Propuestas del LLM - REQUIEREN APROBACION HUMANA")]
         for s in c.llm_suggestions:
             lines.append(f"-- {s['statement']} [{s['operation']}] sintaxis_valida={s['syntax_valid']} "
                          f"confianza={s['confidence']}\n-- {s['explanation']}")
@@ -388,7 +388,8 @@ class MigrationPipeline:
                 w.writerow({k: v for k, v in f.to_dict().items() if k in w.fieldnames})
         report = {
             "run_dir": str(c.run_dir), "modes": c.modes, "matrix_version": c.matrix.version,
-            "llm": {"enabled": c.llm is not None, "model": getattr(c.llm, "model", None),
+            "llm": {"enabled": c.llm is not None, "provider": c.cfg.get("llm.provider", "ollama"),
+                    "model": getattr(c.llm, "model", None) or c.cfg.get("llm.model"),
                     "calls": getattr(c.llm, "calls", 0)},
             "inventory": c.inventory.summary(), "findings_by_severity": sev,
             "statements_by_status": _count(st.status for st in c.inventory.statements),
@@ -428,7 +429,7 @@ def _render_report(c: RunContext, r: dict) -> str:
         "# Reporte de migracion Cloudera CDP -> VAST Database", "",
         f"- **Ejecucion:** `{c.run_dir.name}`",
         f"- **Modo origen:** {c.modes.get('source')}  |  **Modo destino:** {c.modes.get('target')}",
-        f"- **LLM (NIM):** {'activo (' + str(r['llm']['model']) + ', ' + str(r['llm']['calls']) + ' llamadas)' if r['llm']['enabled'] else 'no disponible - modo deterministico'}",
+        f"- **LLM ({r['llm']['provider']}):** {'activo (' + str(r['llm']['model']) + ', ' + str(r['llm']['calls']) + ' llamadas)' if r['llm']['enabled'] else 'no disponible - modo deterministico'}",
         f"- **Matriz de equivalencia:** {r['matrix_version']}", "",
         "## Inventario", "",
         f"| Bases | Tablas | Vistas | Sentencias | Politicas Ranger |", "|---|---|---|---|---|",

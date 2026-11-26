@@ -2,7 +2,7 @@
 
 Estrategia "deterministico primero":
   1. Reglas de la matriz de equivalencia + sqlglot (hive -> trino) resuelven la mayoria.
-  2. Lo que queda como severity=manual se marca para revision (LLM via NIM y/o humano).
+  2. Lo que queda como severity=manual se marca para revision (LLM y/o humano).
 """
 from __future__ import annotations
 

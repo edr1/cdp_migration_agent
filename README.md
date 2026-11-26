@@ -1,7 +1,7 @@
 # CDP → Trino Migration Agent
 
 Agente de IA para migrar datos desde **Cloudera (origen: Hive / Impala)** hacia **Trino (destino: Iceberg)**,
-pensado para ejecutarse en una **NVIDIA DGX Spark** usando un modelo servido con **NVIDIA NIM**.
+pensado para ejecutarse en una **NVIDIA DGX Spark** usando **Nemotron 3.5 Lightning 30B-A3B** servido con **Ollama** en la DGX (NVIDIA NIM como alternativa).
 
 > **Fase 1:** ambiente local de origen y destino en Docker + dataset sintético.
 > **Fase 2:** motor agéntico de migración hacia VAST Database (ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
@@ -163,17 +163,17 @@ Diseño completo: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**. Resumen:
 - **Online/offline por lado**: si no hay acceso a CDP, interpreta un paquete de DDL/DML/DQL + políticas Ranger
   ([`examples/input_bundle/`](examples/input_bundle)); si no hay acceso a VAST, genera los scripts Trino-VAST
   con la [matriz de equivalencia](config/equivalence_matrix.yaml), datos sintéticos y validaciones para ejecución manual.
-- **LLM local con NVIDIA NIM** (API OpenAI) para revisar lo no traducible, clasificar columnas y reparar SQL;
+- **LLM local: Nemotron 3.5 Lightning 30B-A3B vía Ollama remoto en la DGX** (API nativa `/api/chat`; NIM/vLLM como alternativa `provider: openai`) para revisar lo no traducible, clasificar columnas y reparar SQL;
   el motor funciona sin LLM (`--no-llm`).
 
 ```bash
-make nim-up               # LLM NIM en la DGX Spark (NIM_IMAGE, NGC_API_KEY en .env)
-make agent-probe          # conectividad CDP / Trino-VAST / NIM
+make ollama-check         # Ollama remoto responde y el modelo Nemotron esta descargado
+make agent-probe          # conectividad CDP / Trino-VAST / LLM
 make agent-run-offline    # paquete de entrada de ejemplo -> out/<run>/ (sin CDP ni VAST)
 make agent-run            # auto online/offline con config/agent.yaml (VAST real)
 make agent-run-local      # contra la emulación local (Hive docker -> Trino/Iceberg docker)
 make agent-ask Q="traduce: SELECT nvl(a,'x') FROM db.t"   # modo agente interactivo
-make agent-test           # pruebas (NIM simulado)
+make agent-test           # pruebas (Ollama y NIM simulados)
 ```
 
 Salida: `out/<run>/` con `RUNBOOK.md`, `00_report/report.md`, DDL/DML/DQL traducidos, plan de seguridad,

@@ -14,9 +14,14 @@ services:
       HIVE_PORT: ${HIVE_PORT:-10000}
       TRINO_HOST: ${TRINO_HOST:-trino}
       TRINO_PORT: ${TRINO_PORT_INTERNAL:-8080}
-      NIM_BASE_URL: ${NIM_BASE_URL:-http://nim:8000/v1}
-      NIM_MODEL: ${NIM_MODEL:-}
+      # LLM: Ollama remoto en la DGX Spark (Nemotron 3.5 Lightning 30B-A3B)
       LLM_ENABLED: ${LLM_ENABLED:-true}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
+      LLM_MODEL: ${LLM_MODEL:-nemotron-3.5-lightning:30b-a3b}
+      LLM_NUM_CTX: ${LLM_NUM_CTX:-32768}
+      LLM_THINK: ${LLM_THINK:-false}
+      LLM_API_KEY: ${LLM_API_KEY:-}
       SOURCE_MODE: ${SOURCE_MODE:-auto}
       TARGET_MODE: ${TARGET_MODE:-auto}
       AGENT_OUTPUT_DIR: /app/out
@@ -26,6 +31,9 @@ services:
       - ../../skills:/app/skills:ro
       - ../../examples:/app/examples:ro
       - ${INPUT_BUNDLE_HOST:-../../examples/input_bundle}:/app/input_bundle:ro
+    # permite llegar a un Ollama que corre en el host de la DGX (fuera de docker)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks: [cdp-net]
 
 networks:

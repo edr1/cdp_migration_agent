@@ -12,7 +12,7 @@ references: [equivalence-matrix.md]
 
 ## Principio: deterministico primero
 1. **Reglas** (matriz + sqlglot hive->trino) resuelven tipos, clausulas y funciones.
-2. Lo que queda `severity: manual` pasa al **LLM** (NIM) que propone una traduccion en JSON.
+2. Lo que queda `severity: manual` pasa al **LLM** (Nemotron via Ollama) que propone una traduccion en JSON.
 3. La propuesta se valida con `validate_trino_syntax` y se guarda en `review/llm_suggestions.sql`.
    **Nunca** se mezcla con los scripts principales sin aprobacion humana.
 

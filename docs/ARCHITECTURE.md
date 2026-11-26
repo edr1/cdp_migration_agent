@@ -1,6 +1,6 @@
 # Arquitectura del motor agéntico de migración Cloudera CDP → VAST Database
 
-> Versión 0.1 · noviembre 2026 · LLM: NVIDIA NIM en DGX Spark · Destino: VAST Database 5.5 vía Trino
+> Versión 0.1 · noviembre 2026 · LLM: Nemotron 3.5 Lightning 30B-A3B vía Ollama (DGX Spark) · Destino: VAST Database 5.5 vía Trino
 
 ## 1. Objetivo y restricciones
 
@@ -17,7 +17,7 @@ Automatizar la migración de objetos y lógica SQL de **Cloudera CDP** (Hive, Im
 ## 2. Principios de diseño
 
 1. **Determinístico primero, LLM después.** Reglas (matriz YAML + `sqlglot`) resuelven la mayor parte de
-   la traducción. El LLM (NIM) solo interviene en lo que queda como `manual`, para clasificar columnas
+   la traducción. El LLM (Nemotron vía Ollama) solo interviene en lo que queda como `manual`, para clasificar columnas
    ambiguas y para reparar sentencias que fallan en VAST. **El motor produce un resultado válido sin LLM**
    (`--no-llm`), algo necesario con modelos locales chicos y en ambientes sin GPU.
 2. **Humano en el bucle.** Las propuestas del LLM se validan sintácticamente y van a `review/`; nunca se
@@ -38,7 +38,7 @@ flowchart LR
     RGR[Ranger Admin]
   end
   subgraph DGX["NVIDIA DGX Spark"]
-    NIM["NVIDIA NIM<br/>LLM /v1 (OpenAI API)"]
+    NIM["Ollama remoto<br/>Nemotron 3.5 Lightning 30B-A3B<br/>/api/chat"]
     AG["Motor agéntico<br/>(migration_agent)"]
     PKG[("Paquete de migración<br/>out/&lt;run&gt;")]
   end
@@ -63,7 +63,7 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-  P0{{"P0 Probe<br/>¿CDP? ¿VAST/Trino? ¿NIM?"}}
+  P0{{"P0 Probe<br/>¿CDP? ¿VAST/Trino? ¿LLM?"}}
   P0 -->|CDP online| D1[Descubrimiento HS2 + Ranger REST]
   P0 -->|CDP offline| D2[Ingesta del paquete de entrada]
   D1 & D2 --> IR[(IR canónico)]
@@ -88,9 +88,9 @@ flowchart LR
   P5 -. error SQL .-> L3((LLM repair))
 ```
 
-| Fase | Skill (`skills/`) | Tools determinísticas | Uso del LLM (NIM) | Artefactos |
+| Fase | Skill (`skills/`) | Tools determinísticas | Uso del LLM | Artefactos |
 |---|---|---|---|---|
-| **P0 Probe** | `00-connectivity-probe` | `tcp_probe`, `probe_hive`, `probe_trino`, `NIMClient.available` | — | `report.json → modes` |
+| **P0 Probe** | `00-connectivity-probe` | `tcp_probe`, `probe_hive`, `probe_trino`, `create_llm().available` | — | `report.json → modes` |
 | **P1 Discover** | `01-source-discovery` | `source_online.discover` (SHOW CREATE TABLE, conteos, Ranger REST) · `source_offline.ingest_bundle` · `split_statements` · `classify` · `table_from_ddl` · `parse_ranger_export` | — | Inventario (IR) |
 | **P2 Translate** | `02-vast-sql-translation` (+ `references/equivalence-matrix.md`) | `EquivalenceMatrix.map_type` · `Translator.translate_table/statement` · `_fix_implicit_casts` · `strip_impala_hints` | Propuesta JSON para sentencias `manual`, validada con `validate_trino_syntax` | `01_ddl/`, `02_dml/`, `03_dql/`, `review/llm_suggestions.sql` |
 | **P3 Security** | `03-ranger-policy-mapping` | `ranger.translate_policies` (access/deny → identity policy; column → allow/deny; masking → column mask; rowfilter → row filter) | — (la seguridad no se delega al LLM) | `04_security/vast_access_plan.json`, `trino_rules.json`, `vast_catalog_security.properties` |
@@ -99,7 +99,7 @@ flowchart LR
 | **P6 Package** | `06-migration-packaging` | `p6_package` | — | `RUNBOOK.md`, `00_report/`, `review/manual_items.md` |
 
 Las skills usan **divulgación progresiva**: el orquestador inyecta el `SKILL.md` de la fase activa en el
-prompt del NIM, y las referencias se cargan bajo demanda con la tool `read_skill`.
+prompt del LLM, y las referencias se cargan bajo demanda con la tool `read_skill`.
 
 ## 6. Componentes
 
@@ -109,13 +109,14 @@ migration_agent/
     ir.py          IR: Table, Column, Statement, RangerPolicy, Finding, Inventory
     matrix.py      Matriz de equivalencia (config/equivalence_matrix.yaml)
     config.py      YAML + ${VAR:-default}
-    llm.py         Cliente NIM (OpenAI /v1/chat/completions, tool calling, JSON) sin dependencias
+    llm.py         Clientes LLM sin dependencias: OllamaClient (/api/chat, num_ctx, think, keep_alive)
+                   y OpenAICompatClient (NIM/vLLM); tool calling normalizado a formato OpenAI
     skills.py      Registro de skills (frontmatter YAML + referencias)
   tools/           Tools determinísticas por fase (ver tabla §5)
   agent/
     pipeline.py    Orquestador (máquina de estados P0..P6, enrutamiento por conectividad)
     tools_registry.py  Tools expuestas al LLM (formato OpenAI "tools")
-    react.py       Modo agente interactivo (ReAct + tool calling sobre NIM)
+    react.py       Modo agente interactivo (ReAct + tool calling sobre Ollama/Nemotron)
   cli.py           probe | run | translate | ask
 skills/            SKILL.md por fase
 config/            agent.yaml (VAST), agent.local.yaml (emulación Iceberg), equivalence_matrix.yaml
@@ -139,7 +140,18 @@ requieren revisión?"). Usa las mismas tools, y solo las de lectura sobre VAST.
 | Semántica de columnas | Columnas ambiguas + lista cerrada | `{"columns": {col: semántica}}` | Solo valores de la lista |
 | Reparación (online) | SQL + error de VAST + SKILL.md de despliegue | `{"sql": "..."}` | Se re-ejecuta; si funciona se registra `deploy.llm_repaired` |
 
-Degradación: si el NIM no responde, el motor registra `llm.unavailable` y continúa en modo determinístico.
+Degradación: si el LLM no responde (u Ollama no tiene el modelo descargado), el motor registra `llm.unavailable` y continúa en modo determinístico.
+
+### 6.3 Modelo y proveedor LLM
+| Parámetro | Valor por defecto | Motivo |
+|---|---|---|
+| `llm.provider` | `ollama` | API nativa `/api/chat`: permite `num_ctx`, `think` y `keep_alive` por petición |
+| `llm.model` | `nemotron-3.5-lightning:30b-a3b` | MoE de 30B con 3B activos: rápido para muchas llamadas cortas con tool calling. En la DGX Spark también `:30b-a3b-nvfp4` (NVFP4 nativo de Blackwell, ~23 GB) |
+| `llm.num_ctx` | 32768 | Ollama usa 4096 por defecto: no alcanza para SKILL.md + DDL + hallazgos |
+| `llm.think` | `false` | Las salidas son JSON acotado; razonar agrega latencia. Se puede subir a `true/low/medium/high` para la revisión de sentencias complejas |
+| `llm.keep_alive` | `30m` | Mantiene el modelo cargado entre fases |
+
+Alternativa: `provider: openai` con NVIDIA NIM, vLLM o el endpoint `/v1` de Ollama (`docker/nim/`).
 
 ## 7. Matriz de equivalencia (resumen)
 
@@ -177,16 +189,17 @@ Adaptación del patrón Databricks *faker-data-generation* a un esquema desconoc
 
 ## 9. Seguridad y operación
 
-- Credenciales solo por variables de entorno (`RANGER_PASSWORD`, `NIM_API_KEY`, claves VAST en el catálogo Trino); nunca se escriben en reportes.
+- Credenciales solo por variables de entorno (`RANGER_PASSWORD`, `LLM_API_KEY`, claves VAST en el catálogo Trino); nunca se escriben en reportes.
 - El modo agente expone a VAST solo consultas de lectura. El DDL lo ejecuta el pipeline, no el LLM.
-- El LLM corre **local** en la DGX (NIM), así que los DDL, las políticas y los metadatos no salen del perímetro.
+- El LLM corre **local** en la DGX (Ollama), así que los DDL, las políticas y los metadatos no salen del perímetro.
 - El plan de acceso VAST es una especificación para revisión: el motor no toca VMS.
 
 ## 10. Despliegue en la DGX Spark
 
 ```bash
-make nim-up          # NIM_IMAGE y NGC_API_KEY en .env (imagen NIM soportada en DGX Spark)
-make agent-probe     # verifica CDP / Trino-VAST / NIM
+# En la DGX: OLLAMA_HOST=0.0.0.0:11434 ollama serve ; ollama pull nemotron-3.5-lightning:30b-a3b
+make ollama-check    # LLM_BASE_URL / LLM_MODEL en .env
+make agent-probe     # verifica CDP / Trino-VAST / LLM
 make agent-run       # pipeline (auto online/offline)
 make agent-run-offline INPUT_BUNDLE_HOST=/ruta/al/paquete   # sin CDP ni VAST
 ```

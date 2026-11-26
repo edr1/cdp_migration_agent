@@ -56,6 +56,42 @@ class FakeNIM(BaseHTTPRequestHandler):
         self._send({"choices": [{"message": msg}]})
 
 
+class FakeOllama(BaseHTTPRequestHandler):
+    """Simula la API nativa de Ollama: /api/tags y /api/chat (tool calls con argumentos como objeto)."""
+    requests: list = []
+
+    def log_message(self, *a):
+        pass
+
+    def _send(self, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        self._send({"models": [{"name": "nemotron-3.5-lightning:30b-a3b"}]})
+
+    def do_POST(self):
+        req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        FakeOllama.requests.append(req)
+        msgs = req["messages"]
+        if req.get("tools"):
+            if not any(m["role"] == "tool" for m in msgs):
+                msg = {"role": "assistant", "content": "", "tool_calls": [
+                    {"function": {"name": "translate_sql", "arguments": {"sql": "SELECT nvl(a,'x') FROM db.t"}}}]}
+            else:
+                msg = {"role": "assistant", "content": "Traduccion lista: COALESCE"}
+        elif "Clasificas columnas" in msgs[0]["content"]:
+            msg = {"role": "assistant", "content": json.dumps({"columns": {}})}
+        else:
+            msg = {"role": "assistant", "thinking": "analizando...",
+                   "content": json.dumps({"sql": ["SELECT 1"], "explanation": "propuesta", "confidence": 0.6})}
+        self._send({"model": req["model"], "message": msg, "done": True})
+
+
 class TestTranslation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -117,12 +153,57 @@ class TestPipeline(unittest.TestCase):
         ddl = (ctx.run_dir / "01_ddl" / "01_create_tables.sql").read_text(encoding="utf-8")
         self.assertIn("iceberg.db_production.tbl_certificacion_logs", ddl)
 
-    def test_llm_nodes_with_fake_nim(self):
+    def test_llm_nodes_with_fake_ollama(self):
+        """Proveedor por defecto: Ollama nativo con Nemotron 3.5 Lightning."""
+        FakeOllama.requests.clear()
+        srv = HTTPServer(("127.0.0.1", 0), FakeOllama)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            url = f"http://127.0.0.1:{srv.server_port}"
+            pipe = MigrationPipeline(self._cfg(**{"llm.enabled": True, "llm.provider": "ollama", "llm.base_url": url,
+                                                  "llm.model": "nemotron-3.5-lightning:30b-a3b"}), "o")
+            ctx = pipe.run(["P0_probe", "P1_discover", "P2_translate"])
+            self.assertEqual(ctx.llm.provider, "ollama")
+            self.assertTrue(ctx.llm_suggestions)
+            self.assertTrue(all(s["syntax_valid"] for s in ctx.llm_suggestions))
+            first = FakeOllama.requests[0]
+            self.assertEqual(first["model"], "nemotron-3.5-lightning:30b-a3b")
+            self.assertEqual(first["options"]["num_ctx"], 32768)
+            self.assertEqual(first["format"], "json")
+            self.assertIs(first["think"], False)
+            from migration_agent.agent.react import run_agent
+            answer = run_agent(pipe, "traduce SELECT nvl(a,'x') FROM db.t")
+            self.assertIn("COALESCE", answer)
+            # el historial reenviado a Ollama lleva argumentos como objeto y tool_name en la respuesta de la tool
+            last = FakeOllama.requests[-1]["messages"]
+            self.assertIsInstance(next(m for m in last if m.get("tool_calls"))["tool_calls"][0]["function"]["arguments"], dict)
+            self.assertEqual(next(m for m in last if m["role"] == "tool")["tool_name"], "translate_sql")
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_ollama_missing_model_degrades(self):
+        FakeOllama.requests.clear()
+        srv = HTTPServer(("127.0.0.1", 0), FakeOllama)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            url = f"http://127.0.0.1:{srv.server_port}"
+            ctx = MigrationPipeline(self._cfg(**{"llm.enabled": True, "llm.provider": "ollama", "llm.base_url": url,
+                                                 "llm.model": "modelo-inexistente:1b"}), "m").run(["P0_probe"])
+            self.assertIsNone(ctx.llm)
+            self.assertTrue(any(f.rule == "llm.unavailable" and "ollama pull" in f.message for f in ctx.findings))
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_llm_nodes_with_fake_openai_compatible(self):
+        """Proveedor alternativo: API compatible OpenAI (NVIDIA NIM / vLLM)."""
         srv = HTTPServer(("127.0.0.1", 0), FakeNIM)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         try:
             url = f"http://127.0.0.1:{srv.server_port}/v1"
-            pipe = MigrationPipeline(self._cfg(**{"llm.enabled": True, "llm.base_url": url, "llm.model": "fake/model"}), "l")
+            pipe = MigrationPipeline(self._cfg(**{"llm.enabled": True, "llm.provider": "openai", "llm.base_url": url,
+                                                  "llm.model": "fake/model"}), "l")
             ctx = pipe.run(["P0_probe", "P1_discover", "P2_translate"])
             self.assertIsNotNone(ctx.llm)
             self.assertTrue(ctx.llm_suggestions)

@@ -5,7 +5,7 @@ VPY    := $(VENV)/bin/python
 SRC    := docker compose --env-file .env -f docker/cloudera/docker-compose.yml
 TGT    := docker compose --env-file .env -f docker/trino/docker-compose.yml
 
-.PHONY: help env venv data data-local data-docker source-up source-up-impala hue-up hue-down source-load source-down target-up target-init target-down up down clean beeline trino nim-up nim-down agent-build agent-probe agent-run agent-run-offline agent-run-local agent-ask agent-test
+.PHONY: help env venv data data-local data-docker source-up source-up-impala hue-up hue-down source-load source-down target-up target-init target-down up down clean beeline trino ollama-check nim-up nim-down agent-build agent-probe agent-run agent-run-offline agent-run-local agent-ask agent-test
 
 help:            ## Lista de comandos
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-18s %s\n", $$1, $$2}'
@@ -79,7 +79,13 @@ NIM   := docker compose --env-file .env -f docker/nim/docker-compose.yml
 # Argumentos extra para el agente, p. ej.: make agent-run ARGS="--no-llm --rows 500"
 ARGS  ?=
 
-nim-up: env      ## Levanta el LLM NVIDIA NIM (requiere NIM_IMAGE y NGC_API_KEY)
+LLM_BASE_URL ?= $(shell grep -E '^LLM_BASE_URL=' .env 2>/dev/null | cut -d= -f2 | cut -d' ' -f1 | sed 's/host.docker.internal/localhost/')
+LLM_MODEL    ?= $(shell grep -E '^LLM_MODEL=' .env 2>/dev/null | cut -d= -f2 | cut -d' ' -f1)
+
+ollama-check:    ## Verifica el Ollama remoto y que el modelo Nemotron este descargado
+	@curl -sf "$(or $(LLM_BASE_URL),http://localhost:11434)/api/tags" | grep -q '"$(or $(LLM_MODEL),nemotron-3.5-lightning:30b-a3b)"' 	  && echo "OK: $(or $(LLM_MODEL),nemotron-3.5-lightning:30b-a3b) disponible en $(or $(LLM_BASE_URL),http://localhost:11434)" 	  || { echo "Falta el modelo o Ollama no responde. En la DGX: ollama pull $(or $(LLM_MODEL),nemotron-3.5-lightning:30b-a3b)"; exit 1; }
+
+nim-up: env      ## (Alternativa) Levanta NVIDIA NIM (requiere NIM_IMAGE y NGC_API_KEY)
 	$(NIM) up -d
 
 nim-down:        ## Detiene el NIM

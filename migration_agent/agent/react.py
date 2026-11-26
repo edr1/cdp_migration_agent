@@ -1,4 +1,4 @@
-"""Modo agente interactivo (ReAct con tool calling sobre NVIDIA NIM).
+"""Modo agente interactivo (ReAct con tool calling; Nemotron via Ollama o NIM).
 
 Permite al usuario pedir en lenguaje natural tareas puntuales ("traduce esta consulta", "que tipos
 de db_consulting requieren revision", "genera 5 filas de ejemplo de X") usando las mismas tools
@@ -25,7 +25,7 @@ Skills disponibles (lee la relevante con read_skill antes de tareas complejas):
 def run_agent(pipeline: MigrationPipeline, question: str, max_steps: int = 8) -> str:
     c = pipeline.ctx
     if c.llm is None:
-        raise RuntimeError("El modo agente requiere el LLM (NIM) disponible: revisa llm.base_url / NIM_BASE_URL")
+        raise RuntimeError("El modo agente requiere el LLM disponible: revisa llm.base_url / LLM_BASE_URL y llm.model / LLM_MODEL")
     reg = ToolRegistry(c)
     tools = reg.specs(allow_side_effects=c.target is not None)
     messages = [{"role": "system", "content": SYSTEM.format(skills=c.skills.index())},

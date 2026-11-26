@@ -48,10 +48,10 @@ def main(argv=None) -> int:
         p.add_argument("--naming", choices=["vast", "plain"])
         p.add_argument("--catalog")
         p.add_argument("--bucket")
-        p.add_argument("--no-llm", action="store_true", help="modo 100%% deterministico (sin NIM)")
+        p.add_argument("--no-llm", action="store_true", help="modo 100%% deterministico (sin LLM)")
         p.add_argument("--out")
 
-    sub.add_parser("probe", help="detecta conectividad a CDP, VAST/Trino y NIM")
+    sub.add_parser("probe", help="detecta conectividad a CDP, VAST/Trino y al LLM (Ollama/NIM)")
     p_run = sub.add_parser("run", help="ejecuta el pipeline completo (o fases con --phases)")
     common(p_run)
     p_run.add_argument("--phases", help=f"subset separado por comas de {','.join(PHASES)}")
@@ -62,7 +62,7 @@ def main(argv=None) -> int:
     common(p_tr)
     p_tr.add_argument("--sql", required=True)
     p_tr.add_argument("--db", default="default")
-    p_ask = sub.add_parser("ask", help="modo agente interactivo (requiere NIM)")
+    p_ask = sub.add_parser("ask", help="modo agente interactivo (requiere LLM)")
     common(p_ask)
     p_ask.add_argument("question")
 
@@ -70,9 +70,10 @@ def main(argv=None) -> int:
     if args.cmd == "probe":
         cfg = load_config(args.config)
         modes = connectivity.resolve_modes(cfg)
-        from .core.llm import NIMClient
-        ok, detail = NIMClient(cfg).available()
-        modes["llm"] = {"available": ok, "detail": detail}
+        from .core.llm import create_llm
+        llm = create_llm(cfg)
+        ok, detail = llm.available()
+        modes["llm"] = {"provider": llm.provider, "model": llm.model, "available": ok, "detail": detail}
         print(json.dumps(modes, indent=2, ensure_ascii=False))
         return 0
 

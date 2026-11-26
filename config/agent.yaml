@@ -6,16 +6,23 @@ output_dir: ${AGENT_OUTPUT_DIR:-out}
 matrix: config/equivalence_matrix.yaml
 skills_dir: skills
 
-# ---------------- LLM servido por NVIDIA NIM en la DGX Spark ----------------
+# ---------------- LLM: Nemotron 3.5 Lightning 30B-A3B via Ollama remoto en la DGX Spark ----------------
 llm:
   enabled: ${LLM_ENABLED:-true}
-  base_url: ${NIM_BASE_URL:-http://localhost:8000/v1}     # API compatible OpenAI del NIM
-  model: ${NIM_MODEL:-meta/llama-3.1-8b-instruct}
-  api_key: ${NIM_API_KEY:-not-needed-for-local-nim}
+  provider: ${LLM_PROVIDER:-ollama}                 # ollama (API nativa) | openai (NIM / vLLM / Ollama /v1)
+  base_url: ${LLM_BASE_URL:-http://localhost:11434}  # Ollama en la DGX, p. ej. http://dgx-spark:11434
+  # Tag oficial de la libreria Ollama. En la DGX Spark (Blackwell GB10) puedes usar
+  # nemotron-3.5-lightning:30b-a3b-nvfp4 (~23 GB, NVFP4 nativo de Blackwell).
+  model: ${LLM_MODEL:-nemotron-3.5-lightning:30b-a3b}
+  api_key: ${LLM_API_KEY:-}                         # solo si Ollama esta detras de un proxy con token
   temperature: 0.1
-  max_tokens: 2048
-  timeout_s: 120
+  max_tokens: 4096
+  num_ctx: ${LLM_NUM_CTX:-32768}                    # contexto por peticion (Ollama usa 4096 por defecto)
+  think: ${LLM_THINK:-false}                        # razonamiento: false | true | low | medium | high
+  keep_alive: ${LLM_KEEP_ALIVE:-30m}                # mantener el modelo cargado entre fases
+  timeout_s: 300
   max_repair_attempts: 2      # reintentos de reparacion de SQL fallido (modo target online)
+  max_review_items: 25        # sentencias "manual" que se envian al LLM por ejecucion
 
 # ---------------- ORIGEN: Cloudera CDP ----------------
 source:
