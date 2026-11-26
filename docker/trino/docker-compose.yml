@@ -1,9 +1,58 @@
-\ cambios, reinicia Hue para que lea la configuración:
+# =====================================================================
+#  DESTINO - Trino + Apache Iceberg (lakehouse)
+#  - seaweedfs        : almacenamiento compatible S3 para los datos Iceberg
+#                       (reemplaza a MinIO, cuyas imagenes ya no son publicas)
+#  - s3-init          : crea el bucket del warehouse
+#  - iceberg-postgres : catalogo Iceberg JDBC (metadatos de tablas)
+#  - trino            : motor SQL destino (http://localhost:8080)
+#  Todas las imagenes son multi-arquitectura (amd64 / arm64 -> DGX Spark).
+# =====================================================================
+name: cdp-target
 
-docker restart cdp-hue
-Luego, en http://localhost:8888, elige Editor → Trino (destino). A la izquierda aparece el navegador iceberg → db_production / db_consulting. No lo pude probar aquí; si el editor Trino no aparece o da error, pásame el log y lo ajusto:
+configs:
+  seaweedfs_s3:
+    content: |
+      {
+        "identities": [
+          {
+            "name": "trino",
+            "credentials": [
+              { "accessKey": "${S3_ACCESS_KEY:-cdp_access_key}", "secretKey": "${S3_SECRET_KEY:-cdp_secret_key_change_me}" }
+            ],
+            "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+          }
+        ]
+      }
 
-docker logs cdp-hue --tail 50: [cdp-net]
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-3.80}
+    container_name: cdp-seaweedfs
+    hostname: seaweedfs
+    command:
+      - "server"
+      - "-dir=/data"
+      - "-ip=seaweedfs"
+      - "-ip.bind=0.0.0.0"
+      - "-volume.max=0"
+      - "-master.volumeSizeLimitMB=1024"
+      - "-s3"
+      - "-s3.port=8333"
+      - "-s3.config=/etc/seaweedfs/s3.json"
+    configs:
+      - source: seaweedfs_s3
+        target: /etc/seaweedfs/s3.json
+    ports:
+      - "${S3_API_PORT:-8333}:8333"     # API S3
+      - "${S3_MASTER_UI_PORT:-9333}:9333"  # UI del master de SeaweedFS
+    volumes:
+      - seaweedfs-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9333/cluster/status || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [cdp-net]
 
   s3-init:
     image: amazon/aws-cli:${AWS_CLI_VERSION:-2.15.0}

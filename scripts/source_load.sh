@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 COMPOSE="docker compose --env-file .env -f docker/cloudera/docker-compose.yml"
-BEELINE="/opt/hive/bin/beeline -u jdbc:hive2://localhost:10000/ -n hive --silent=true --showHeader=true --outputformat=table2"
+BEELINE="/opt/hive/bin/beeline -u jdbc:hive2://localhost:10000/ -n hive --silent=true --showHeader=true --outputformat=table"
 
 if [ ! -f data/source/manifest.json ]; then
   echo "No existe data/source/manifest.json. Ejecuta primero: make data" >&2

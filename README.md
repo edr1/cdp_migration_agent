@@ -90,6 +90,8 @@ make source-up      # Hive Metastore + HiveServer2  (make source-up-impala para 
 make source-load    # crea bases/tablas y carga el dataset; muestra conteos
 make target-up      # Trino + Iceberg + SeaweedFS (S3)
 make target-init    # crea tablas del catálogo JDBC + iceberg.db_production y iceberg.db_consulting
+
+make env && make data && make source-up && make source-load && make target-up && make target-init
 ```
 
 ### Hue (UI web del origen)
@@ -103,7 +105,6 @@ Abre http://localhost:8888. **El primer usuario que inicies sesión se crea como
 - **Tablas** (navegador del metastore): ver `db_production` y `db_consulting`, columnas, tipos y una muestra de filas.
 - **Editor → Hive**: consultar con SQL, p. ej. `SELECT * FROM db_production.vw_certificacion_logs LIMIT 50`.
 - **Editor → Impala**: solo si levantaste el perfil Impala (`make source-up-impala`).
-
 - **Editor → Trino (destino)**: el mismo Hue consulta Trino (`trino://hue@trino:8080/iceberg`), útil para
   comparar origen y destino lado a lado. Hue 4.11 no trae conector nativo de Trino, así que la imagen
   `cdp-migration/hue` (ver `docker/cloudera/hue/Dockerfile`) agrega el driver `trino` para el conector SQLAlchemy.
