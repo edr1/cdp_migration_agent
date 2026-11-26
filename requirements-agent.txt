@@ -1,0 +1,8 @@
+# Motor agentico (nucleo: funciona 100% offline)
+sqlglot>=26.0
+PyYAML>=6.0
+pyarrow>=17.0
+Faker>=30.0
+# Conectores online (opcionales)
+trino>=0.330            # destino VAST via Trino
+pyhive[hive_pure_sasl]>=0.7   # origen HiveServer2 (CDP)

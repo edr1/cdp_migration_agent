@@ -1,0 +1,87 @@
+# =====================================================================
+# Perfil LOCAL: emulacion de VAST con Trino + Iceberg (docker/trino) y origen Hive (docker/cloudera).
+# Diferencias con agent.yaml: catalogo iceberg, nombres plain (catalog.schema.tabla), sin sorted_by.
+# =====================================================================
+output_dir: ${AGENT_OUTPUT_DIR:-out}
+matrix: config/equivalence_matrix.yaml
+skills_dir: skills
+
+# ---------------- LLM servido por NVIDIA NIM en la DGX Spark ----------------
+llm:
+  enabled: ${LLM_ENABLED:-true}
+  base_url: ${NIM_BASE_URL:-http://localhost:8000/v1}     # API compatible OpenAI del NIM
+  model: ${NIM_MODEL:-meta/llama-3.1-8b-instruct}
+  api_key: ${NIM_API_KEY:-not-needed-for-local-nim}
+  temperature: 0.1
+  max_tokens: 2048
+  timeout_s: 120
+  max_repair_attempts: 2      # reintentos de reparacion de SQL fallido (modo target online)
+
+# ---------------- ORIGEN: Cloudera CDP ----------------
+source:
+  mode: ${SOURCE_MODE:-auto}          # auto | online | offline
+  hive:
+    host: ${HIVE_HOST:-localhost}
+    port: ${HIVE_PORT:-10000}
+    username: ${HIVE_USER:-hive}
+    auth: ${HIVE_AUTH:-NONE}          # NONE | NOSASL | LDAP | KERBEROS
+    databases: [db_production, db_consulting]
+  impala:
+    host: ${IMPALA_HOST:-}
+    port: ${IMPALA_PORT:-21050}
+  ranger:
+    url: ${RANGER_URL:-}              # ej. https://ranger.cdp.local:6182
+    services: [cm_hive, cm_impala]
+    username: ${RANGER_USER:-}
+    password_env: RANGER_PASSWORD
+  # Paquete de entrada para modo offline (DDL/DML/DQL + politicas Ranger exportadas)
+  input_bundle: ${INPUT_BUNDLE:-examples/input_bundle}
+
+# ---------------- DESTINO: VAST Database via Trino ----------------
+target:
+  mode: ${TARGET_MODE:-auto}          # auto | online | offline
+  trino:
+    host: ${TRINO_HOST:-localhost}
+    port: ${TRINO_PORT:-8080}
+    user: ${TRINO_USER:-migration_agent}
+    http_scheme: ${TRINO_SCHEME:-http}
+    catalog: ${TRINO_CATALOG:-iceberg}
+  # vast  -> vast."<bucket>/<schema>".<tabla>   (VAST real)
+  # plain -> <catalog>.<schema>.<tabla>          (emulacion local con Iceberg)
+  naming: ${TARGET_NAMING:-plain}
+  bucket: ${VAST_BUCKET:-cdp-migration}
+  schema_map: {}                      # opcional: {db_origen: schema_destino}
+  apply_sorted_by: false              # emitir ALTER TABLE ... SET PROPERTIES sorted_by
+  insert_batch_rows: 500              # filas por INSERT (limite VAST: 5 MB por sentencia)
+
+# ---------------- Datos sinteticos ----------------
+synthetic:
+  rows_default: 1000
+  seed: 42
+  locale: es_MX
+  corruption_rate: 0.0                # >0 inyecta registros invalidos documentados
+  start_date: "2026-01-01"
+  end_date: "2026-10-31"
+  formats: [parquet, sql]             # parquet | csv | sql
+  rows_per_table:
+    db_production.tbl_certificacion_logs: 2000
+    db_consulting.tbl_sensores_equipos_cloud: 30
+  # Integridad referencial: la columna hija (regex) toma valores de la columna padre
+  relationships:
+    - child: "db_production.tbl_certificacion_logs.cve_estado_.*"
+      parent: "db_production.cat_certificacion_valor_sensor.cve_valor_sensor"
+      weights: {"1": 85, "4": 6, "2": 3, "3": 3, "0": 2, "5": 1}   # mayoria INSTALADO
+    - child: "db_consulting.tbl_equipos_cloud_certificacion.(crowstrike|sep_antivirus|carbonblack|symantec_dlp|jamf_pro|tanium)"
+      parent: "db_consulting.tbl_sensores_equipos_cloud.sensor_value"
+      weights: {"Installed": 88, "Not Reporting": 5, "Outdated": 3, "Not Installed": 2, "N/A": 2}
+  # Overrides puntuales por columna (semantica, valores y pesos)
+  column_overrides:
+    db_production.cat_certificacion_valor_sensor.valor_sensor:
+      values: [NO INSTALADO, INSTALADO, INSTALADO SIN REPORTAR, DESACTUALIZADO, NO APLICA, ERROR]
+    db_consulting.tbl_sensores_equipos_cloud.sensor_key:
+      values: [crowstrike, sep_antivirus, carbonblack, symantec_dlp, jamf_pro, tanium]
+    db_consulting.tbl_sensores_equipos_cloud.sensor_value:
+      values: [Installed, Not Installed, Not Reporting, Outdated, N/A]
+      weights: [80, 5, 7, 5, 3]
+    db_consulting.tbl_sensores_equipos_cloud.sensor_status:
+      values: [OK, KO]

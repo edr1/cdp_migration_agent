@@ -1,0 +1,79 @@
+{
+  "metaDataInfo": {"Host name": "ranger.cdp.local", "Exported by": "admin", "Ranger apache version": "2.4.0.7.1.9"},
+  "policies": [
+    {
+      "id": 101, "name": "db_production-analistas-lectura", "service": "cm_hive", "serviceType": "hive",
+      "policyType": 0, "isEnabled": true,
+      "resources": {"database": {"values": ["db_production"]}, "table": {"values": ["*"]}, "column": {"values": ["*"]}},
+      "policyItems": [
+        {"accesses": [{"type": "select", "isAllowed": true}], "users": [], "groups": ["analistas_seguridad"]},
+        {"accesses": [{"type": "select", "isAllowed": true}, {"type": "update", "isAllowed": true},
+                      {"type": "create", "isAllowed": true}, {"type": "drop", "isAllowed": true}],
+         "users": ["svc_etl_batch"], "groups": []}
+      ],
+      "denyPolicyItems": [
+        {"accesses": [{"type": "select", "isAllowed": true}], "users": ["contratista01"], "groups": []}
+      ]
+    },
+    {
+      "id": 102, "name": "db_consulting-cloud-ops", "service": "cm_impala", "serviceType": "impala",
+      "policyType": 0, "isEnabled": true,
+      "resources": {"database": {"values": ["db_consulting"]}, "table": {"values": ["tbl_equipos_cloud_certificacion", "vw_equipos_cloud_certificacion"]},
+                    "column": {"values": ["*"]}},
+      "policyItems": [
+        {"accesses": [{"type": "select", "isAllowed": true}, {"type": "refresh", "isAllowed": true}],
+         "users": ["jlopez"], "groups": ["cloud_ops", "public"]},
+        {"accesses": [{"type": "all", "isAllowed": true}], "users": ["svc_etl_cloud"], "groups": []}
+      ],
+      "allowExceptions": [
+        {"accesses": [{"type": "select", "isAllowed": true}], "users": ["practicante01"], "groups": []}
+      ]
+    },
+    {
+      "id": 103, "name": "pii-ocultar-columnas-empleado", "service": "cm_hive", "serviceType": "hive",
+      "policyType": 0, "isEnabled": true,
+      "resources": {"database": {"values": ["db_consulting"]}, "table": {"values": ["tbl_equipos_cloud_certificacion"]},
+                    "column": {"values": ["correo_electronico", "nm_jefe"]}},
+      "denyPolicyItems": [
+        {"accesses": [{"type": "select", "isAllowed": true}], "users": [], "groups": ["cloud_ops"]}
+      ]
+    },
+    {
+      "id": 201, "name": "mask-correo-y-ip", "service": "cm_hive", "serviceType": "hive",
+      "policyType": 1, "isEnabled": true,
+      "resources": {"database": {"values": ["db_production"]}, "table": {"values": ["tbl_certificacion_logs"]},
+                    "column": {"values": ["correo_electronico"]}},
+      "dataMaskPolicyItems": [
+        {"dataMaskInfo": {"dataMaskType": "MASK_SHOW_LAST_4"}, "accesses": [{"type": "select", "isAllowed": true}],
+         "users": [], "groups": ["analistas_seguridad"]},
+        {"dataMaskInfo": {"dataMaskType": "CUSTOM", "valueExpr": "concat('***@', split({col}, '@')[1])"},
+         "accesses": [{"type": "select", "isAllowed": true}], "users": ["auditor01"], "groups": []}
+      ]
+    },
+    {
+      "id": 202, "name": "mask-ip-hash", "service": "cm_hive", "serviceType": "hive",
+      "policyType": 1, "isEnabled": true,
+      "resources": {"database": {"values": ["db_production"]}, "table": {"values": ["tbl_certificacion_logs"]},
+                    "column": {"values": ["direccion_ipv4"]}},
+      "dataMaskPolicyItems": [
+        {"dataMaskInfo": {"dataMaskType": "MASK_HASH"}, "accesses": [{"type": "select", "isAllowed": true}],
+         "users": [], "groups": ["analistas_seguridad"]}
+      ]
+    },
+    {
+      "id": 301, "name": "rowfilter-negocio-banca", "service": "cm_hive", "serviceType": "hive",
+      "policyType": 2, "isEnabled": true,
+      "resources": {"database": {"values": ["db_production"]}, "table": {"values": ["tbl_certificacion_logs"]}},
+      "rowFilterPolicyItems": [
+        {"rowFilterInfo": {"filterExpr": "negocio = 'BANCA'"}, "accesses": [{"type": "select", "isAllowed": true}],
+         "users": [], "groups": ["analistas_banca"]}
+      ]
+    },
+    {
+      "id": 302, "name": "politica-legacy-deshabilitada", "service": "cm_hive", "serviceType": "hive",
+      "policyType": 0, "isEnabled": false,
+      "resources": {"database": {"values": ["default"]}, "table": {"values": ["*"]}},
+      "policyItems": [{"accesses": [{"type": "all", "isAllowed": true}], "users": ["admin_legacy"], "groups": []}]
+    }
+  ]
+}

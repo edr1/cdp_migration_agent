@@ -4,7 +4,7 @@ Agente de IA para migrar datos desde **Cloudera (origen: Hive / Impala)** hacia 
 pensado para ejecutarse en una **NVIDIA DGX Spark** usando un modelo servido con **NVIDIA NIM**.
 
 > **Fase 1:** ambiente local de origen y destino en Docker + dataset sintético.
-> El agente (orquestación + NIM) se construye en la siguiente fase sobre esta base.
+> **Fase 2:** motor agéntico de migración hacia VAST Database (ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
 
 ## Arquitectura
 
@@ -154,7 +154,27 @@ data_generator/    generador del dataset sintético
 scripts/           carga del origen / inicialización del destino
 ```
 
-## Siguiente fase: agente de migración con NVIDIA NIM
-- Servir un LLM con NIM en la DGX Spark (contenedor NIM con API compatible OpenAI) en la misma red `cdp-migration-net`.
-- Herramientas del agente: inspección de metadatos (HMS / `DESCRIBE FORMATTED`), mapeo de tipos Hive→Trino,
-  generación de DDL Iceberg, copia de datos y validación (conteos/checksums contra `manifest.json`).
+## Motor agéntico de migración (CDP → VAST Database)
+
+Diseño completo: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**. Resumen:
+
+- **7 fases** (P0 probe → P1 discover → P2 translate → P3 security → P4 synthetic → P5 validate → P6 package),
+  cada una con su skill en [`skills/`](skills) y sus tools determinísticas en [`migration_agent/tools/`](migration_agent/tools).
+- **Online/offline por lado**: si no hay acceso a CDP, interpreta un paquete de DDL/DML/DQL + políticas Ranger
+  ([`examples/input_bundle/`](examples/input_bundle)); si no hay acceso a VAST, genera los scripts Trino-VAST
+  con la [matriz de equivalencia](config/equivalence_matrix.yaml), datos sintéticos y validaciones para ejecución manual.
+- **LLM local con NVIDIA NIM** (API OpenAI) para revisar lo no traducible, clasificar columnas y reparar SQL;
+  el motor funciona sin LLM (`--no-llm`).
+
+```bash
+make nim-up               # LLM NIM en la DGX Spark (NIM_IMAGE, NGC_API_KEY en .env)
+make agent-probe          # conectividad CDP / Trino-VAST / NIM
+make agent-run-offline    # paquete de entrada de ejemplo -> out/<run>/ (sin CDP ni VAST)
+make agent-run            # auto online/offline con config/agent.yaml (VAST real)
+make agent-run-local      # contra la emulación local (Hive docker -> Trino/Iceberg docker)
+make agent-ask Q="traduce: SELECT nvl(a,'x') FROM db.t"   # modo agente interactivo
+make agent-test           # pruebas (NIM simulado)
+```
+
+Salida: `out/<run>/` con `RUNBOOK.md`, `00_report/report.md`, DDL/DML/DQL traducidos, plan de seguridad,
+datos sintéticos (Parquet + INSERT) y paquete de validación.

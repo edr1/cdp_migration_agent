@@ -1,0 +1,33 @@
+# Motor agentico en contenedor, en la misma red que origen (Hive), destino (Trino) y NIM.
+name: cdp-agent
+
+services:
+  agent:
+    build:
+      context: ../..
+      dockerfile: docker/agent/Dockerfile
+    image: cdp-migration/agent:0.1.0
+    container_name: cdp-agent
+    environment:
+      # Dentro de la red docker los servicios se resuelven por nombre
+      HIVE_HOST: ${HIVE_HOST:-hiveserver2}
+      HIVE_PORT: ${HIVE_PORT:-10000}
+      TRINO_HOST: ${TRINO_HOST:-trino}
+      TRINO_PORT: ${TRINO_PORT_INTERNAL:-8080}
+      NIM_BASE_URL: ${NIM_BASE_URL:-http://nim:8000/v1}
+      NIM_MODEL: ${NIM_MODEL:-}
+      LLM_ENABLED: ${LLM_ENABLED:-true}
+      SOURCE_MODE: ${SOURCE_MODE:-auto}
+      TARGET_MODE: ${TARGET_MODE:-auto}
+      AGENT_OUTPUT_DIR: /app/out
+    volumes:
+      - ../../out:/app/out
+      - ../../config:/app/config:ro
+      - ../../skills:/app/skills:ro
+      - ../../examples:/app/examples:ro
+      - ${INPUT_BUNDLE_HOST:-../../examples/input_bundle}:/app/input_bundle:ro
+    networks: [cdp-net]
+
+networks:
+  cdp-net:
+    name: ${CDP_NETWORK:-cdp-migration-net}

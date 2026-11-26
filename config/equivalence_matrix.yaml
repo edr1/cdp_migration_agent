@@ -1,0 +1,150 @@
+# =====================================================================
+# Matriz de equivalencia  Cloudera (Hive / Impala)  ->  VAST Database (via Trino, conector "vast")
+#
+# Fuente: VAST Cluster 5.5 docs (consultadas 2026-11-25)
+#   https://docs.vastdata.com/develop/docs/dev-database-reference-sql
+#   https://docs.vastdata.com/develop/docs/dev-database-reference-data-types
+#   https://docs.vastdata.com/develop/docs/dev-database-integrations-trino
+#   https://docs.vastdata.com/develop/docs/dev-database-reference-limits
+#
+# severity:  ok       -> equivalente directo
+#            info     -> se elimina/ajusta sin impacto funcional
+#            warning  -> equivalente con diferencia semantica (revisar)
+#            manual   -> no hay equivalente automatico (requiere decision humana/LLM)
+# verified:  true si la regla esta respaldada explicitamente por la doc de VAST;
+#            false = inferida de Trino estandar, validar contra el cluster.
+# =====================================================================
+version: "2026.11-vast5.5"
+
+naming:
+  # Trino + VAST: vast."<bucket>/<schema>".<tabla>
+  vast: '{catalog}."{bucket}/{schema}".{table}'
+  # Emulacion local (Trino + Iceberg): iceberg.<schema>.<tabla>
+  plain: '{catalog}.{schema}.{table}'
+
+types:
+  STRING:      {target: VARCHAR,        severity: ok,      verified: true}
+  VARCHAR:     {target: VARCHAR,        severity: warning, verified: false,
+                note: "VARCHAR(n): la doc VAST solo lista VARCHAR sin longitud; se elimina n (no se fuerza longitud)"}
+  CHAR:        {target: VARCHAR,        severity: warning, verified: false,
+                note: "CHAR(n) no documentado en VAST; se mapea a VARCHAR (se pierde el padding con espacios)"}
+  TINYINT:     {target: TINYINT,        severity: ok,      verified: true}
+  SMALLINT:    {target: SMALLINT,       severity: ok,      verified: true}
+  INT:         {target: INTEGER,        severity: ok,      verified: true}
+  INTEGER:     {target: INTEGER,        severity: ok,      verified: true}
+  BIGINT:      {target: BIGINT,         severity: ok,      verified: true}
+  FLOAT:       {target: REAL,           severity: ok,      verified: true}
+  REAL:        {target: REAL,           severity: ok,      verified: true}
+  DOUBLE:      {target: DOUBLE,         severity: ok,      verified: true}
+  DECIMAL:     {target: DECIMAL,        severity: ok,      verified: true, max_precision: 38}
+  BOOLEAN:     {target: BOOLEAN,        severity: ok,      verified: true}
+  DATE:        {target: DATE,           severity: ok,      verified: true}
+  TIMESTAMP:   {target: "TIMESTAMP(6)", severity: warning, verified: true,
+                note: "Hive/Impala guardan hasta nanosegundos; VAST procesa timestamp(6) (microsegundos)"}
+  BINARY:      {target: VARBINARY,      severity: ok,      verified: true}
+  ARRAY:       {target: ARRAY,          severity: ok,      verified: true, note: "no puede ser columna de particion ni de orden"}
+  MAP:         {target: MAP,            severity: ok,      verified: true, note: "no puede ser columna de particion ni de orden"}
+  STRUCT:      {target: ROW,            severity: ok,      verified: true, note: "no usable dentro de vistas Trino sobre VAST"}
+  UNIONTYPE:   {target: null,           severity: manual,  verified: true, note: "sin equivalente; descomponer en columnas o serializar a VARCHAR(JSON)"}
+  INTERVAL:    {target: null,           severity: manual,  verified: true, note: "VAST rechaza columnas INTERVAL"}
+
+ddl:
+  stored_as:        {action: drop, severity: info,    note: "VAST administra el formato de almacenamiento"}
+  row_format_serde: {action: drop, severity: info,    note: "SerDe no aplica en VAST"}
+  location:         {action: drop, severity: info,    note: "La ubicacion la define el bucket/schema VAST; los datos deben migrarse"}
+  tblproperties:    {action: drop, severity: info,    note: "Propiedades Hive (transactional, parquet.compression, ...) no aplican"}
+  external:         {action: managed_table, severity: warning, note: "EXTERNAL -> tabla administrada en VAST; copiar datos desde HDFS"}
+  partitioned_by:   {action: partitioning, severity: warning, verified: true, max_keys: 4,
+                     note: "Columnas de particion pasan a columnas normales + WITH (partitioning = ARRAY[...]); solo en CREATE TABLE"}
+  clustered_by:     {action: partitioning_bucket, severity: warning, verified: true,
+                     note: "CLUSTERED BY ... INTO n BUCKETS -> transform bucket(col, n) (cuenta dentro del limite de 4 llaves)"}
+  sorted_by:        {action: sorted_by, severity: warning, verified: true, max_columns: 4,
+                     note: "sorted_by via ALTER TABLE ... SET PROPERTIES; no se puede quitar ni cambiar; no se pueden actualizar valores de columnas de orden"}
+  constraints:      {action: drop, severity: warning, verified: true,
+                     note: "VAST no soporta NOT NULL / PRIMARY KEY / UNIQUE / CHECK / DEFAULT"}
+  column_comment:   {action: drop, severity: info, verified: false, note: "comentarios no confirmados en VAST; se documentan en el reporte"}
+  ctas:             {action: keep, severity: ok, verified: true, note: "CTAS soportado via Trino (no en el Query Engine nativo)"}
+  view:             {action: keep, severity: warning, verified: true,
+                     note: "Vistas Trino sobre VAST: sin tipos anidados, sin SECURITY, nombres totalmente calificados"}
+  materialized_view: {action: manual, severity: manual, verified: false, note: "no documentado en VAST 5.5"}
+  create_database:  {action: create_schema, severity: ok, verified: true, note: 'CREATE SCHEMA vast."<bucket>/<schema>"'}
+  alter_change_type: {action: manual, severity: manual, verified: true,
+                     note: "VAST no soporta cambio de tipo: ADD columna nueva + UPDATE CAST + DROP columna"}
+
+dml:
+  insert_into_select:   {action: keep, severity: ok, verified: true}
+  insert_values:        {action: keep, severity: ok, verified: true, note: "limite de 5 MB por sentencia: dividir en lotes"}
+  insert_overwrite:     {action: delete_then_insert, severity: warning, verified: false,
+                         note: "INSERT OVERWRITE no existe: DELETE (de la tabla o particion) + INSERT dentro de START TRANSACTION"}
+  insert_partition_static: {action: inline_partition_values, severity: warning, verified: true,
+                         note: "PARTITION (p='x') -> la columna p se agrega al SELECT como literal"}
+  load_data:            {action: manual, severity: manual, verified: true,
+                         note: "LOAD DATA INPATH -> copiar Parquet al bucket y usar import de VAST (vast.import_data) o INSERT ... SELECT federado"}
+  update:               {action: keep, severity: warning, verified: true, note: "no se pueden actualizar columnas de orden (sorted_by)"}
+  delete:               {action: keep, severity: ok, verified: true}
+  merge:                {action: keep, severity: warning, verified: false, note: "MERGE soportado via Trino; validar en el cluster"}
+  truncate:             {action: delete_all, severity: info, verified: false, note: "TRUNCATE via Trino no confirmado: se usa DELETE FROM sin WHERE"}
+  upsert:               {action: manual, severity: manual, verified: true, note: "sin ON CONFLICT: usar MERGE o DELETE+INSERT"}
+
+session:
+  # Sentencias de sesion/administracion sin equivalente: se eliminan del script
+  drop_patterns:
+    - '^\s*SET\s+'
+    - '^\s*RESET\b'
+    - '^\s*USE\s+'
+    - '^\s*ADD\s+(JAR|FILE|ARCHIVE)\b'
+    - '^\s*INVALIDATE\s+METADATA\b'
+    - '^\s*REFRESH\b'
+    - '^\s*COMPUTE\s+(INCREMENTAL\s+)?STATS\b'
+    - '^\s*ANALYZE\s+TABLE\b'
+    - '^\s*MSCK\s+REPAIR\b'
+  manual_patterns:
+    - {pattern: '^\s*CREATE\s+(TEMPORARY\s+)?FUNCTION\b', note: "UDF Hive/Impala: reescribir como expresion SQL o funcion Trino"}
+    - {pattern: '\bTRANSFORM\s*\(', note: "TRANSFORM (scripts) no soportado"}
+
+dql:
+  # Pre-procesamiento de sintaxis exclusiva de Impala antes del parser
+  impala_hints:
+    - '\[\s*(SHUFFLE|BROADCAST|NOSHUFFLE|CLUSTERED|NOCLUSTERED)\s*\]'
+    - '/\*\s*\+[^*]*\*/'
+    - '\bSTRAIGHT_JOIN\b'
+  # Funciones a revisar aunque el traductor las convierta (diferencias semanticas)
+  review_functions:
+    - {name: REGEXP_EXTRACT, note: "Hive usa grupo 1 por defecto; Trino devuelve el match completo si no se pasa grupo"}
+    - {name: DATE_FORMAT,    note: "patrones Java (Hive) vs MySQL (Trino): validar formato convertido"}
+    - {name: FROM_UNIXTIME,  note: "zona horaria de sesion puede diferir"}
+    - {name: UNIX_TIMESTAMP, note: "zona horaria de sesion puede diferir"}
+    - {name: PERCENTILE,     note: "Hive percentile exacto vs Trino approx_percentile"}
+    - {name: GET_JSON_OBJECT, note: "convertido a json_extract_scalar: validar rutas JSON"}
+  unsupported_functions:
+    - {name: REFLECT,        note: "invoca Java; sin equivalente"}
+    - {name: JAVA_METHOD,    note: "invoca Java; sin equivalente"}
+    - {name: INPUT__FILE__NAME, note: "columna virtual de Hive; sin equivalente"}
+
+security:
+  # Apache Ranger (servicios hive/impala/hdfs) -> VAST
+  model: |
+    VAST no documenta GRANT/REVOKE. El control de acceso se hace con identity policies (VMS) y reglas
+    de fila/columna que Trino aplica cuando el catalogo tiene enable_access_control=true,
+    enable_row_column_security=true y enable_end_user_impersonation=true. El usuario de sesion Trino
+    debe coincidir con un login de VAST.
+  access_levels:
+    select: read
+    read: read
+    update: write
+    write: write
+    create: admin
+    drop: admin
+    alter: admin
+    index: admin
+    lock: admin
+    refresh: read
+    all: admin
+  masks:
+    MASK:              "regexp_replace(CAST({col} AS VARCHAR), '[A-Za-z0-9]', 'x')"
+    MASK_SHOW_LAST_4:  "concat(regexp_replace(substr(CAST({col} AS VARCHAR), 1, greatest(length(CAST({col} AS VARCHAR)) - 4, 0)), '.', 'x'), substr(CAST({col} AS VARCHAR), greatest(length(CAST({col} AS VARCHAR)) - 3, 1)))"
+    MASK_SHOW_FIRST_4: "concat(substr(CAST({col} AS VARCHAR), 1, 4), regexp_replace(substr(CAST({col} AS VARCHAR), 5), '.', 'x'))"
+    MASK_HASH:         "to_hex(sha256(to_utf8(CAST({col} AS VARCHAR))))"
+    MASK_NULL:         "NULL"
+    MASK_NONE:         null
+    MASK_DATE_SHOW_YEAR: "date_trunc('year', {col})"

@@ -1,0 +1,41 @@
+# =====================================================================
+#  LLM del motor agentico: NVIDIA NIM en la DGX Spark (API compatible OpenAI)
+#  Requisitos: driver NVIDIA + NVIDIA Container Toolkit, NGC_API_KEY (ngc.nvidia.com)
+#    echo "$NGC_API_KEY" | docker login nvcr.io -u '$oauthtoken' --password-stdin
+#  NIM_IMAGE: elige un NIM soportado en DGX Spark (arm64 / GB10) desde build.nvidia.com,
+#  p. ej. un modelo Llama 3.1 8B Instruct o Nemotron con soporte de tool calling.
+# =====================================================================
+name: cdp-llm
+
+services:
+  nim:
+    image: ${NIM_IMAGE:?Define NIM_IMAGE con la imagen NIM para DGX Spark (nvcr.io/nim/...)}
+    container_name: cdp-nim
+    environment:
+      NGC_API_KEY: ${NGC_API_KEY:?Define NGC_API_KEY}
+    ports:
+      - "${NIM_PORT:-8000}:8000"
+    volumes:
+      - nim-cache:/opt/nim/.cache
+    shm_size: 16gb
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/v1/health/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 60
+      start_period: 120s
+    networks: [cdp-net]
+
+volumes:
+  nim-cache:
+
+networks:
+  cdp-net:
+    name: ${CDP_NETWORK:-cdp-migration-net}
