@@ -1,0 +1,85 @@
+# =====================================================================
+# Hue compilado desde el codigo fuente - ARM64 nativo (DGX Spark / Grace)
+#
+# Docker Hub no publica gethue/hue para arm64 (ni 4.11.0, ni 4.12.0, ni latest).
+# Este Dockerfile sigue el oficial de Hue (tools/docker/hue/Dockerfile, release-4.11.0)
+# y deja la instalacion en la misma ruta que la imagen oficial (/usr/share/hue), asi que
+# z-hue.ini y el docker-compose funcionan igual.
+#
+# Diferencias con el oficial:
+#   - clona el tag del repositorio en lugar de copiar un checkout local;
+#   - Node.js desde el tarball oficial de nodejs.org (el script setup_14.x de NodeSource
+#     esta descontinuado), con la arquitectura tomada de TARGETARCH (arm64 o amd64);
+#   - versiones de pip/setuptools/virtualenv fijadas a las de la epoca de Hue 4.11
+#     (las ultimas ya no soportan Python 3.8);
+#   - solo los conectores que usa este proyecto: psycopg2 (BD de Hue) y trino (SQLAlchemy).
+#
+# Build largo (compila dependencias Python y el frontend con webpack): ~20-40 min.
+# =====================================================================
+FROM ubuntu:20.04 AS build
+
+ARG HUE_GIT_REF=release-4.11.0
+ARG NODE_VERSION=14.21.3
+ARG TARGETARCH
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+      build-essential pkg-config ca-certificates curl git rsync xz-utils sudo \
+      python3-pip python3.8-venv python3.8-dev python3.8-distutils \
+      libkrb5-dev libsasl2-modules-gssapi-mit libsasl2-dev krb5-config krb5-user \
+      libxml2-dev libxslt-dev libmysqlclient-dev libldap2-dev libsnappy-dev \
+      libffi-dev libssl-dev libpq-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# Node.js para el build del frontend
+RUN set -eux; \
+    case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
+      arm64) NODE_ARCH=arm64 ;; amd64) NODE_ARCH=x64 ;; \
+      *) echo "arquitectura no soportada: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
+      | tar -xJ -C /usr/local --strip-components=1; \
+    node --version; npm --version
+
+RUN pip3 install --no-cache-dir "pip==23.0.1" "setuptools==67.6.0" "virtualenv==20.21.0"
+
+RUN git clone --depth 1 --branch "${HUE_GIT_REF}" https://github.com/cloudera/hue.git /hue
+
+WORKDIR /hue
+RUN set -eux; \
+    rm -rf desktop/conf && cp -r desktop/conf.dist desktop/conf; \
+    ln -fs /usr/local/bin/pip3.8 /usr/bin/pip3.8; \
+    PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python \
+    PREFIX=/usr/share PYTHON_VER=python3.8 ROOT=/hue \
+    SYS_PYTHON=/usr/bin/python3.8 SYS_PIP=/usr/local/bin/pip3.8 \
+      make apps install; \
+    cp -r tools/docker/hue/conf3/* /usr/share/hue/desktop/conf/; \
+    cp tools/docker/hue/startup.sh /usr/share/hue/startup.sh; \
+    rm -rf /usr/share/hue/node_modules
+
+WORKDIR /usr/share/hue
+# psycopg2: BD de Hue en PostgreSQL. trino: dialecto SQLAlchemy trino:// (sin el extra
+# [sqlalchemy] para no cambiar la version de SQLAlchemy de Hue).
+RUN set -eux; \
+    ./build/env/bin/python -m pip install --no-cache-dir psycopg2-binary trino; \
+    ./build/env/bin/python -c "import psycopg2, trino.sqlalchemy; print('conectores OK')"
+
+# ---------------------------------------------------------------------
+# Imagen final: solo librerias de ejecucion (sin compiladores, Node ni el repo)
+# ---------------------------------------------------------------------
+FROM ubuntu:20.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+      python3.8 python3.8-venv ca-certificates \
+      libkrb5-3 libsasl2-2 libsasl2-modules libsasl2-modules-gssapi-mit krb5-user \
+      libxml2 libxslt1.1 libmysqlclient21 libldap-2.4-2 libsnappy1v5 libffi7 libssl1.1 libpq5 \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd hue && useradd -r -u 1001 -g hue hue
+
+COPY --from=build --chown=hue:hue /usr/share/hue /usr/share/hue
+
+WORKDIR /usr/share/hue
+USER hue
+EXPOSE 8888
+CMD ["./startup.sh"]

@@ -5,6 +5,16 @@ VPY    := $(VENV)/bin/python
 SRC    := docker compose --env-file .env -f docker/cloudera/docker-compose.yml
 TGT    := docker compose --env-file .env -f docker/trino/docker-compose.yml
 
+# gethue/hue solo existe para amd64: en ARM64 (DGX Spark) Hue se compila desde el codigo fuente.
+# Se puede forzar con: make hue-up HUE_DOCKERFILE=Dockerfile.arm64
+HOST_ARCH := $(shell uname -m)
+ifneq ($(filter aarch64 arm64,$(HOST_ARCH)),)
+HUE_DOCKERFILE ?= Dockerfile.arm64
+else
+HUE_DOCKERFILE ?= Dockerfile
+endif
+export HUE_DOCKERFILE
+
 .PHONY: help env venv data data-local data-docker source-up source-up-impala hue-up hue-down source-load source-down target-up target-init target-down up down clean beeline trino ollama-check nim-up nim-down agent-build agent-probe agent-run agent-run-offline agent-run-local agent-ask agent-test
 
 help:            ## Lista de comandos
@@ -43,7 +53,8 @@ source-up: env   ## Levanta el ORIGEN (Hive Metastore + HiveServer2)
 source-up-impala: env  ## Levanta el ORIGEN incluyendo Impala (solo amd64)
 	$(SRC) --profile impala up -d --build --wait
 
-hue-up: env      ## Levanta Hue (UI web del ORIGEN) en http://localhost:8888
+hue-up: env      ## Levanta Hue (UI web del ORIGEN) en http://localhost:8888 (ARM64: compila Hue, ~20-40 min la 1a vez)
+	@echo ">>> Arquitectura $(HOST_ARCH): construyendo Hue con docker/cloudera/hue/$(HUE_DOCKERFILE)"
 	$(SRC) --profile hue up -d --build
 
 hue-down:        ## Detiene solo Hue

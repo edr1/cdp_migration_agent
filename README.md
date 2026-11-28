@@ -31,8 +31,13 @@ emula con los mismos motores open source que trae CDP Runtime:
 | Impala | `apache/impala` (statestored, catalogd, impalad) | **solo amd64** |
 | Hue | `gethue/hue` + PostgreSQL propio | ver nota** |
 
-\*\* Verifica si `gethue/hue:${HUE_VERSION}` publica arm64 (`docker manifest inspect gethue/hue:4.11.0`).
-Si solo hay amd64, Hue funciona bajo emulación QEMU/binfmt (más lento, suficiente para explorar datos).
+\*\* `gethue/hue` **solo se publica para amd64** (ningún tag, ni `4.11.0` ni `latest`, trae arm64). En ARM64
+(DGX Spark) `make hue-up` detecta la arquitectura y compila Hue 4.11 desde el código fuente con
+[`docker/cloudera/hue/Dockerfile.arm64`](docker/cloudera/hue/Dockerfile.arm64) (la primera vez tarda ~20-40 min;
+después usa la caché). Alternativa rápida: la imagen amd64 bajo emulación QEMU
+(`docker run --privileged --rm tonistiigi/binfmt --install amd64` y
+`DOCKER_DEFAULT_PLATFORM=linux/amd64 make hue-up HUE_DOCKERFILE=Dockerfile`),
+más lenta en ejecución.
 
 ### Almacenamiento S3 del destino: SeaweedFS (no MinIO)
 MinIO retiró sus imágenes `minio/minio` y `minio/mc` de Docker Hub y Quay ya no permite descargas anónimas
@@ -97,7 +102,7 @@ make env && make data && make source-up && make source-load && make target-up &&
 ### Hue (UI web del origen)
 
 ```bash
-make hue-up         # levanta Hue (y el origen, si no estaba arriba)
+q      # levanta Hue (y el origen, si no estaba arriba)
 ```
 
 Abre http://localhost:8888. **El primer usuario que inicies sesión se crea como administrador**
